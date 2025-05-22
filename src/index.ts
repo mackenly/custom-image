@@ -1,32 +1,34 @@
 import { Manager, MCEvent } from '@managed-components/types'
 
-export async function addPixel(event: MCEvent) {
+export async function performClientFetch(event: MCEvent) {
   const { client, payload } = event
   if (!payload.imgSrc) {
     console.error('No imgSrc provided in payload')
     return
   }
 
-  const imgSrc: string = payload.imgSrc
+  if (!['true', true].includes(payload.useImgTag)) {
+    client.fetch(payload.imgSrc, {
+      method: 'GET',
+      mode: 'no-cors',
+      credentials: 'include',
+    })
+    return
+  } else {
+    const imgSrc: string = payload.imgSrc
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029')
 
-  client.execute(`
+    client.execute(`
     (function() {
-      const safeImgSrc = "${imgSrc.replace(/"/g, '\\"')}";
-
-      function safeAppend(element) {
-        if (document.body) {
-          document.body.appendChild(element);
-        } else {
-          document.addEventListener('DOMContentLoaded', () => {
-            document.body.appendChild(element);
-          });
-        }
-      }
-
       function addPixel() {
         const img = new Image(1, 1);
         img.style.display = 'none';
-        img.referrerPolicy = 'no-referrer';
+        img.referrerPolicy = 'unsafe-url';
         img.decoding = 'async';
 
         let cleaned = false;
@@ -34,7 +36,9 @@ export async function addPixel(event: MCEvent) {
           if (!cleaned) {
             cleaned = true;
             try {
-              document.body.removeChild(img);
+              if (document.body.contains(img)) {
+                document.body.removeChild(img);
+              }
             } catch (_) {}
           }
         };
@@ -42,32 +46,21 @@ export async function addPixel(event: MCEvent) {
         img.onload = img.onerror = cleanup;
         setTimeout(cleanup, 10000);
 
-        img.src = safeImgSrc;
-        safeAppend(img);
-      }
-
-      function sendPixel() {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-        fetch(safeImgSrc, {
-          method: 'GET',
-          mode: 'no-cors',
-          credentials: 'include',
-          signal: controller.signal
-        })
-        .then((response) => {
-          if (response.ok) addPixel();
-        })
-        .catch(addPixel)
-        .finally(() => clearTimeout(timeoutId));
+        img.src = "${imgSrc}";
+        if (document.body) {
+          document.body.appendChild(img);
+        } else {
+          document.addEventListener('DOMContentLoaded', () => {
+            document.body.appendChild(img);
+          });
+        }
       }
 
       function start() {
         if (window.requestIdleCallback) {
-          window.requestIdleCallback(sendPixel, { timeout: 3000 });
+          window.requestIdleCallback(addPixel, { timeout: 3000 });
         } else {
-          setTimeout(sendPixel, 300);
+          setTimeout(addPixel, 300);
         }
       }
 
@@ -76,10 +69,11 @@ export async function addPixel(event: MCEvent) {
       } else {
         window.addEventListener('load', start);
       }
-    })();  
+    })();
   `)
+  }
 }
 
 export default async function (manager: Manager) {
-  manager.addEventListener('event', addPixel)
+  manager.addEventListener('event', performClientFetch)
 }
